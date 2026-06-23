@@ -1,0 +1,8 @@
+streamlit>=1.30
+torch>=2.0
+torch-geometric>=2.4
+transformers>=4.30
+rdkit>=2023.3
+numpy
+# Opzionale, solo per la vista 3D interattiva:
+py3Dmol
