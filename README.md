@@ -1,5 +1,9 @@
 # 🧬 Predizione di inibitori dell'HIV con tre approcci di Machine Learning
 
+
+To run the code, just do: 
+>>
+>>
 ## In breve
 
 Questo progetto affronta un problema di **classificazione binaria** in chimica

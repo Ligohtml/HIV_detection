@@ -1,21 +1,3 @@
-"""
-HIV Inhibitor Predictor — App Streamlit
-=======================================
-
-Passa uno SMILES, lo visualizza (2D + 3D opzionale) e lancia i TRE modelli
-separatamente per stimare se la molecola inibisce o meno l'HIV:
-
-  1. SimpleGNN          (una GCN a 3 strati)
-  2. Majority           (ensemble di 27 GCN, voto di maggioranza)
-  3. ChemBERTa          (transfer learning su SMILES)
-
-Per ogni modello mostra la CONFIDENCE di predizione, e in fondo fa la CONTA
-di quanti dei tre modelli dicono "inibitore" e quanti no.
-
-Avvio:
-    streamlit run app.py
-"""
-
 import os
 import io
 
@@ -34,27 +16,22 @@ from models_def import (
     CHEMBERTA_MODEL_NAME,
 )
 
-# ---------------------------------------------------------------------------
-# CONFIGURAZIONE — qui dici all'app dove sono i pesi salvati
-# ---------------------------------------------------------------------------
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
 
-# File attesi dentro MODELS_DIR:
 SIMPLE_GCN_WEIGHTS = os.path.join(MODELS_DIR, "simple_gcn.pth")
 CHEMBERTA_WEIGHTS = os.path.join(MODELS_DIR, "chemberta.pth")
-# i 27 majority: modello_pesi_lista_0.pth ... modello_pesi_lista_26.pth
+# modello_pesi_lista_0.pth … modello_pesi_lista_26.pth
 N_MAJORITY = 27
 MAJORITY_PATTERN = os.path.join(MODELS_DIR, "modello_pesi_lista_{}.pth")
 
-THRESHOLD = 0.5  # soglia di decisione (prob > 0.5 -> inibitore)
-DEVICE = torch.device("cpu")  # in locale la CPU va benissimo per 1 molecola
+THRESHOLD = 0.5
+DEVICE = torch.device("cpu")  # CPU is fine for a single molecule
 
 st.set_page_config(page_title="HIV Inhibitor Predictor", page_icon="🧬", layout="wide")
 
 
-# ===========================================================================
-# CARICAMENTO MODELLI (cache: si caricano una sola volta)
-# ===========================================================================
+# MODEL LOADING (cached: loaded only once)
+
 @st.cache_resource(show_spinner=False)
 def load_simple_gcn():
     if not os.path.exists(SIMPLE_GCN_WEIGHTS):
@@ -77,7 +54,7 @@ def load_majority_models():
         m.load_state_dict(torch.load(path, map_location=DEVICE))
         m.to(DEVICE).eval()
         models.append(m)
-    return models  # lista (può essere vuota)
+    return models
 
 
 @st.cache_resource(show_spinner=True)
@@ -89,17 +66,14 @@ def load_chemberta():
     tokenizer = AutoTokenizer.from_pretrained(CHEMBERTA_MODEL_NAME)
     model = ChemBERTaClassifier(freeze_backbone=True)
     state = torch.load(CHEMBERTA_WEIGHTS, map_location=DEVICE)
-    # strict=False: funziona sia se hai salvato tutto il modello sia solo la testa
+    # strict=False: works whether the full model or just the head was saved
     model.load_state_dict(state, strict=False)
     model.to(DEVICE).eval()
     return model, tokenizer
 
 
-# ===========================================================================
-# FEATURIZZAZIONE / INFERENZA
-# ===========================================================================
+# FEATURISATION / INFERENCE
 def smiles_to_graph(smiles):
-    """SMILES -> oggetto grafo PyG pronto per le GCN (singola molecola)."""
     data = from_smiles(smiles)
     x = data.x.float().to(DEVICE)
     edge_index = data.edge_index.long().to(DEVICE)
@@ -117,7 +91,7 @@ def predict_simple_gcn(model, smiles):
 
 @torch.no_grad()
 def predict_majority(models, smiles):
-    """Ritorna (prob_media, n_voti_inibitore, n_modelli)."""
+    """Returns (mean_prob, n_inhibitor_votes, n_models)."""
     x, edge_index, batch = smiles_to_graph(smiles)
     probs = []
     for m in models:
@@ -144,9 +118,8 @@ def predict_chemberta(model, tokenizer, smiles):
     return prob
 
 
-# ===========================================================================
-# VISUALIZZAZIONE MOLECOLA
-# ===========================================================================
+# MOLECULE VISUALISATION
+
 def draw_2d(mol):
     img = Draw.MolToImage(mol, size=(420, 420))
     buf = io.BytesIO()
@@ -155,7 +128,6 @@ def draw_2d(mol):
 
 
 def render_3d_html(mol):
-    """Vista 3D interattiva con py3Dmol (se installato)."""
     try:
         import py3Dmol
     except ImportError:
@@ -173,141 +145,135 @@ def render_3d_html(mol):
     return view._make_html()
 
 
-# ===========================================================================
+
 # UI
-# ===========================================================================
 st.title("🧬 HIV Inhibitor Predictor")
 st.caption(
-    "Inserisci uno SMILES: l'app lo rappresenta e fa girare i tre modelli "
-    "(**SimpleGNN**, **Majority**, **ChemBERTa**) per stimare l'efficacia "
-    "come inibitore dell'HIV."
+    "Enter a SMILES string: the app will render it and run the three models "
+    "(**SimpleGNN**, **Majority**, **ChemBERTa**) to estimate its effectiveness "
+    "as an HIV inhibitor."
 )
 
-# --- caricamento modelli + avvisi sui pesi mancanti ---
 simple_model = load_simple_gcn()
 majority_models = load_majority_models()
 chemberta_model, chemberta_tokenizer = load_chemberta()
 
 with st.sidebar:
-    st.header("Stato modelli")
-    st.write("✅ SimpleGNN" if simple_model else "⚠️ SimpleGNN — pesi mancanti")
+    st.header("Model status")
+    st.write("✅ SimpleGNN" if simple_model else "⚠️ SimpleGNN — weights missing")
     if majority_models:
-        st.write(f"✅ Majority — {len(majority_models)}/{N_MAJORITY} sotto-modelli")
+        st.write(f"✅ Majority — {len(majority_models)}/{N_MAJORITY} sub-models")
     else:
-        st.write("⚠️ Majority — pesi mancanti")
-    st.write("✅ ChemBERTa" if chemberta_model else "⚠️ ChemBERTa — pesi mancanti")
+        st.write("⚠️ Majority — weights missing")
+    st.write("✅ ChemBERTa" if chemberta_model else "⚠️ ChemBERTa — weights missing")
     st.divider()
     st.caption(
-        f"I pesi vengono cercati in:\n`{MODELS_DIR}`\n\n"
-        "Vedi il README per i nomi file attesi e lo snippet per esportare "
-        "SimpleGNN e ChemBERTa dal notebook."
+        f"Weights are looked up in:\n`{MODELS_DIR}`\n\n"
+        "See the README for the expected file names and the snippet to export "
+        "SimpleGNN and ChemBERTa from the notebook."
     )
-    show_3d = st.checkbox("Mostra anche la struttura 3D", value=False)
+    show_3d = st.checkbox("Also show 3D structure", value=False)
 
-# --- input SMILES ---
 examples = {
-    "— scrivi il tuo —": "",
-    "Aspirina": "CC(=O)Oc1ccccc1C(=O)O",
-    "Caffeina": "Cn1cnc2c1c(=O)n(C)c(=O)n2C",
-    "Azidotimidina (AZT, anti-HIV)": "Cc1cn(C2CC(N=[N+]=[N-])C(CO)O2)c(=O)[nH]c1=O",
+    "— write your own —": "",
+    "Aspirin": "CC(=O)Oc1ccccc1C(=O)O",
+    "Caffeine": "Cn1cnc2c1c(=O)n(C)c(=O)n2C",
+    "Zidovudine (AZT, anti-HIV)": "Cc1cn(C2CC(N=[N+]=[N-])C(CO)O2)c(=O)[nH]c1=O",
 }
 col_a, col_b = st.columns([1, 2])
 with col_a:
-    choice = st.selectbox("Esempi", list(examples.keys()))
+    choice = st.selectbox("Examples", list(examples.keys()))
 with col_b:
-    smiles = st.text_input("SMILES", value=examples[choice], placeholder="Es. CC(=O)Oc1ccccc1C(=O)O")
+    smiles = st.text_input("SMILES", value=examples[choice], placeholder="E.g. CC(=O)Oc1ccccc1C(=O)O")
 
-run = st.button("Analizza molecola", type="primary", use_container_width=True)
+run = st.button("Analyse molecule", type="primary", use_container_width=True)
 
 if run:
     smiles = (smiles or "").strip()
     if not smiles:
-        st.warning("Inserisci uno SMILES.")
+        st.warning("Please enter a SMILES string.")
         st.stop()
 
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
-        st.error("SMILES non valido — RDKit non riesce a interpretarlo. Controlla la sintassi.")
+        st.error("Invalid SMILES — RDKit could not parse it. Please check the syntax.")
         st.stop()
 
     canonical = Chem.MolToSmiles(mol)
-    st.success(f"SMILES valido. Forma canonica: `{canonical}`")
+    st.success(f"Valid SMILES. Canonical form: `{canonical}`")
 
-    # --- struttura ---
-    st.subheader("Struttura")
+    st.subheader("Structure")
     cols = st.columns(2 if show_3d else 1)
     with cols[0]:
-        st.image(draw_2d(mol), caption="2D", use_container_width=False)
+        st.image(draw_2d(mol), caption="2D", use_column_width=False)
     if show_3d:
         with cols[1]:
             html = render_3d_html(mol)
             if html:
                 st.components.v1.html(html, height=440)
             else:
-                st.info("Vista 3D non disponibile (installa `py3Dmol` o embedding fallito).")
+                st.info("3D view not available (install `py3Dmol` or embedding failed).")
 
-    # --- predizioni dei tre modelli ---
-    st.subheader("Predizioni dei modelli")
-    results = []  # (nome, verdetto_inibitore: bool|None, confidence: float|None, extra: str)
+    st.subheader("Model predictions")
+    results = []  # (name, inhibitor_verdict: bool|None, confidence: float|None, extra: str)
 
     # 1) SimpleGNN
     if simple_model is not None:
         p = predict_simple_gcn(simple_model, smiles)
         results.append(("SimpleGNN", p > THRESHOLD, p, ""))
     else:
-        results.append(("SimpleGNN", None, None, "pesi mancanti"))
+        results.append(("SimpleGNN", None, None, "weights missing"))
 
     # 2) Majority
     if majority_models:
         mean_p, votes, n = predict_majority(majority_models, smiles)
-        extra = f"{votes}/{n} sotto-modelli votano inibitore"
+        extra = f"{votes}/{n} sub-models vote inhibitor"
         results.append(("Majority", mean_p > THRESHOLD, mean_p, extra))
     else:
-        results.append(("Majority", None, None, "pesi mancanti"))
+        results.append(("Majority", None, None, "weights missing"))
 
     # 3) ChemBERTa
     if chemberta_model is not None:
         p = predict_chemberta(chemberta_model, chemberta_tokenizer, smiles)
         results.append(("ChemBERTa", p > THRESHOLD, p, ""))
     else:
-        results.append(("ChemBERTa", None, None, "pesi mancanti"))
+        results.append(("ChemBERTa", None, None, "weights missing"))
 
     cols = st.columns(3)
     for col, (name, verdict, prob, extra) in zip(cols, results):
         with col:
             st.markdown(f"### {name}")
             if verdict is None:
-                st.info("Non disponibile\n\n" + extra)
+                st.info("Not available\n\n" + extra)
                 continue
-            label = "🟢 Inibitore" if verdict else "🔴 Non inibitore"
-            # la confidence è la probabilità verso la classe predetta
+            label = "🟢 Inhibitor" if verdict else "🔴 Non-inhibitor"
+            # confidence is the probability toward the predicted class
             conf = prob if verdict else (1 - prob)
-            st.metric(label="Verdetto", value=label)
+            st.metric(label="Verdict", value=label)
             st.metric(label="Confidence", value=f"{conf*100:.1f}%")
-            st.progress(prob, text=f"P(inibitore) = {prob*100:.1f}%")
+            st.progress(prob, text=f"P(inhibitor) = {prob*100:.1f}%")
             if extra:
                 st.caption(extra)
 
-    # --- conta finale ---
     available = [r for r in results if r[1] is not None]
     if available:
         n_inhibitor = sum(1 for r in available if r[1])
         n_total = len(available)
         n_non = n_total - n_inhibitor
 
-        st.subheader("Verdetto collettivo")
+        st.subheader("Collective verdict")
         c1, c2, c3 = st.columns(3)
-        c1.metric("Modelli che dicono INIBITORE", f"{n_inhibitor}/{n_total}")
-        c2.metric("Modelli che dicono NON inibitore", f"{n_non}/{n_total}")
-        consensus = "INIBITORE" if n_inhibitor > n_non else (
-            "NON INIBITORE" if n_non > n_inhibitor else "PARITÀ"
+        c1.metric("Models saying INHIBITOR", f"{n_inhibitor}/{n_total}")
+        c2.metric("Models saying NON-INHIBITOR", f"{n_non}/{n_total}")
+        consensus = "INHIBITOR" if n_inhibitor > n_non else (
+            "NON-INHIBITOR" if n_non > n_inhibitor else "TIE"
         )
-        c3.metric("Consenso", consensus)
+        c3.metric("Consensus", consensus)
 
         if n_total < 3:
             st.caption(
-                f"Nota: solo {n_total} modello/i disponibile/i. "
-                "Carica i pesi mancanti per il voto completo a 3."
+                f"Note: only {n_total} model(s) available. "
+                "Load the missing weights for a full 3-model vote."
             )
     else:
-        st.error("Nessun modello disponibile: carica almeno un set di pesi nella cartella `models/`.")
+        st.error("No models available: load at least one set of weights into the `models/` folder.")

@@ -1,12 +1,4 @@
-"""
-Definizioni dei tre modelli, IDENTICHE a quelle del notebook.
-È fondamentale che l'architettura coincida al 100% con quella usata in
-addestramento, altrimenti il caricamento dei pesi (state_dict) fallisce.
-
-- SimpleGCN          -> modello "simpleGNN"
-- MajorityGCN        -> i 27 modelli dell'ensemble "majority"
-- ChemBERTaClassifier-> transfer learning "ChemBERTa"
-"""
+# Architectures must match the notebook exactly — mismatches break state_dict loading.
 
 import torch
 import torch.nn as nn
@@ -14,17 +6,14 @@ import torch.nn.functional as F
 from torch.nn import Linear
 from torch_geometric.nn import GCNConv, global_mean_pool, global_max_pool
 
-# Nome del backbone pre-addestrato usato nel notebook
 CHEMBERTA_MODEL_NAME = "DeepChem/ChemBERTa-77M-MLM"
 
-# Numero di feature per nodo prodotte da torch_geometric.utils.from_smiles
+# from_smiles produces 9 node features
 NUM_NODE_FEATURES = 9
 HIDDEN_CHANNELS = 64
 
 
-# ---------------------------------------------------------------------------
-# 1) SimpleGCN  (tre strati GCNConv + mean pooling)
-# ---------------------------------------------------------------------------
+# 1) SimpleGCN — 3 GCNConv layers, mean pooling
 class SimpleGCN(torch.nn.Module):
     def __init__(self, num_node_features=NUM_NODE_FEATURES, hidden_channels=HIDDEN_CHANNELS):
         super().__init__()
@@ -45,10 +34,7 @@ class SimpleGCN(torch.nn.Module):
         return out
 
 
-# ---------------------------------------------------------------------------
-# 2) MajorityGCN  (due GCNConv + mean&max pooling concatenati)
-#    Se ne addestrano 27 e si vota a maggioranza.
-# ---------------------------------------------------------------------------
+# 2) MajorityGCN — 2 GCNConv layers, mean+max pooling concatenated; 27 copies, majority vote
 class MajorityGCN(torch.nn.Module):
     def __init__(self, num_node_features=NUM_NODE_FEATURES, hidden_channels=HIDDEN_CHANNELS):
         super().__init__()
@@ -71,13 +57,11 @@ class MajorityGCN(torch.nn.Module):
         return out
 
 
-# ---------------------------------------------------------------------------
-# 3) ChemBERTaClassifier  (backbone congelato + testa di classificazione)
-# ---------------------------------------------------------------------------
+# 3) ChemBERTaClassifier — frozen backbone + classification head
 class ChemBERTaClassifier(nn.Module):
     def __init__(self, model_name=CHEMBERTA_MODEL_NAME, freeze_backbone=True):
         super().__init__()
-        from transformers import AutoModel  # import lazy: solo se serve
+        from transformers import AutoModel  # lazy to avoid loading transformers at startup
         self.backbone = AutoModel.from_pretrained(model_name)
         hidden = self.backbone.config.hidden_size
         if freeze_backbone:
